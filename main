@@ -1,0 +1,62 @@
+def get_stock_indicators(ticker, start_date, end_date, interval = 'DAILY'):
+    url = f'https://alphavantageapi.co/timeseries/analytics?SYMBOLS={ticker}&RANGE={start_date}&RANGE={end_date}&INTERVAL={interval}&OHLC=close&CALCULATIONS=MIN,MAX,MEAN,MEDIAN,CUMULATIVE_RETURN,AUTOCORRELATION,AUTOCORRELATION(lag=2),STDDEV,MAX_DRAWDOWN&apikey={API_KEY}'
+    response = requests.get(url)
+    print(response)
+
+    # Check if the request was successful
+    if response.status_code == 200:
+        # Parse the JSON response
+        data = response.json()
+        print(data)
+
+        # Extract and return the relevant data
+        payload = data.get('payload', {}).get('RETURNS_CALCULATIONS', {})
+        indicators_data = {
+            f"{interval}_MIN": payload.get("MIN", {}).get(ticker),
+            f"{interval}_MAX": payload.get("MAX", {}).get(ticker),
+            f"{interval}_MEAN": payload.get("MEAN", {}).get(ticker),
+            f"{interval}_MEDIAN": payload.get("MEDIAN", {}).get(ticker),
+            f"{interval}_AUTOCORRELATION": payload.get("AUTOCORRELATION", {}).get(ticker),
+            f"{interval}_AUTOCORRELATION_LAG_2": payload.get("AUTOCORRELATION(LAG=2)", {}).get(ticker),
+            f"{interval}_STDDEV": payload.get("STDDEV", {}).get(ticker),
+            f"{interval}_MAX_DRAWDOWN": payload.get("MAX_DRAWDOWN", {}).get(ticker, {}).get('max_drawdown')
+        }
+
+        # Remove 'CUMULATIVE_RETURN' if interval is '60min'
+        if interval != '60min':
+            indicators_data[f"{interval}_CUMULATIVE_RETURN"] = payload.get("CUMULATIVE_RETURN", {}).get(ticker)
+
+        # Convert the data to a DataFrame
+        payload_df = pd.DataFrame([indicators_data])
+        return payload_df
+    else:
+        # Handle errors (e.g., data not found, API issues)
+        print(f"Error fetching data: {response.status_code}")
+        return {}
+
+def add_stock_indicators_to_df(df):
+
+    new_data = []
+    for index, row in df.iterrows():
+
+        # for DAILY
+        start_date = pd.to_datetime(row['date']) - 4 * BDay()
+        end_date = pd.to_datetime(row['date'])
+        indicators_df_day = get_stock_indicators(row['X'], start_date, end_date, 'DAILY')
+        indicators_df_day = pd.DataFrame([indicators_df_day]) if isinstance(indicators_df_day,
+                                                                            dict) else indicators_df_day
+
+        # for 60min
+        start_date = pd.to_datetime(row['date']) - 2 * BDay()
+        indicators_df_hour = get_stock_indicators(row['X'], start_date, end_date, '60min')
+        indicators_df_hour = pd.DataFrame([indicators_df_hour]) if isinstance(indicators_df_hour,
+                                                                              dict) else indicators_df_hour
+
+        combined_df = pd.concat([indicators_df_day, indicators_df_hour], axis=1)
+        new_data.append(combined_df)
+        time.sleep(1)  # sleep to avoid limit
+
+    indicators_combined_df = pd.concat(new_data, ignore_index=True)
+    result_df = pd.concat([df, indicators_combined_df], axis=1)
+
+    return result_df  # Return original DataFrame if no new data
